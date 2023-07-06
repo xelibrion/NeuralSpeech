@@ -35,6 +35,12 @@ We use Montreal-Forced-Aligner v1.0.0. You can get it from [github link](https:/
 ```bash
 wget https://github.com/MontrealCorpusTools/Montreal-Forced-Aligner/releases/download/v1.0.1/montreal-forced-aligner_linux.tar.gz
 tar -zxvf montreal-forced-aligner_linux.tar.gz
+
+# how to debug issues
+# https://github.com/MontrealCorpusTools/Montreal-Forced-Aligner/issues/216
+conda install -c conda-forge libgfortran
+export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:"$CONDA_PREFIX/lib"
+
 ./montreal-forced-aligner/bin/mfa_train_and_align data/raw/LJSpeech-1.1/mfa_input data/raw/LJSpeech-1.1/dict_mfa.txt data/raw/LJSpeech-1.1/mfa_outputs -t ./montreal-forced-aligner/tmp -j 24
 ```
 

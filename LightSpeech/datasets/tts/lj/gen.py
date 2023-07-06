@@ -5,6 +5,8 @@ import os
 
 os.environ["OMP_NUM_THREADS"] = "1"
 
+from typing import List, Optional, Tuple, Any
+
 from datasets.tts.utils import build_phone_encoder
 from utils.indexed_datasets import IndexedDatasetBuilder
 import glob
@@ -19,31 +21,38 @@ from tqdm import tqdm
 from utils.hparams import hparams, set_hparams
 from utils.preprocessor import process_utterance, get_pitch, get_mel2ph
 
-log_format = '%(asctime)s %(message)s'
-logging.basicConfig(stream=sys.stdout, level=logging.INFO,
-                    format=log_format, datefmt='%m/%d %I:%M:%S %p')
+log_format = "%(asctime)s %(message)s"
+logging.basicConfig(
+    stream=sys.stdout,
+    level=logging.INFO,
+    format=log_format,
+    datefmt="%m/%d %I:%M:%S %p",
+)
 
 
 def process_item(raw_data_dir, encoder, tg_fn, wav_fn):
     item_name = os.path.basename(wav_fn)[:-4].replace("lj_", "")
     spk_id = 0
-    ph_fn = f'{raw_data_dir}/mfa_input_txt/{item_name}.ph'
+    ph_fn = f"{raw_data_dir}/mfa_input_txt/{item_name}.ph"
     # spk_embed_fn = f'{raw_data_dir}/spk_embeds/{item_name}.npy'
     ph = open(ph_fn).readlines()[0].strip()
     ph = "<UNK> " + ph + " <EOS>"
     try:
         phone_encoded = encoder.encode(ph)
         wav_data, mel = process_utterance(
-            wav_fn, fft_size=hparams['n_fft'],
-            hop_size=hparams['hop_size'],
-            win_length=hparams['win_size'],
-            num_mels=hparams['audio_num_mel_bins'],
-            fmin=hparams['fmin'],
-            fmax=hparams['fmax'],
-            sample_rate=hparams['audio_sample_rate'],
-            loud_norm=hparams['loud_norm'],
-            min_level_db=hparams['min_level_db'],
-            return_linear=False, vocoder=hparams['vocoder'])
+            wav_fn,
+            fft_size=hparams["n_fft"],
+            hop_size=hparams["hop_size"],
+            win_length=hparams["win_size"],
+            num_mels=hparams["audio_num_mel_bins"],
+            fmin=hparams["fmin"],
+            fmax=hparams["fmax"],
+            sample_rate=hparams["audio_sample_rate"],
+            loud_norm=hparams["loud_norm"],
+            min_level_db=hparams["min_level_db"],
+            return_linear=False,
+            vocoder=hparams["vocoder"],
+        )
         mel = mel.T  # [T, 80]
     except:
         traceback.print_exc()
@@ -56,20 +65,24 @@ def process_item(raw_data_dir, encoder, tg_fn, wav_fn):
 
 
 def process_data(raw_data_dir, encoder, wav_fns, data_dir, prefix):
-    data_df = pd.read_csv(os.path.join(raw_data_dir, 'metadata_phone.csv'))
-    fn2txt = {k: v for k, v in zip(data_df['wav'], data_df['txt1'])}
+    data_df = pd.read_csv(os.path.join(raw_data_dir, "metadata_phone.csv"))
+    fn2txt = {k: v for k, v in zip(data_df["wav"], data_df["txt1"])}
 
-    p = Pool(int(os.getenv('N_PROC', os.cpu_count())))
+    p = Pool(int(os.getenv("N_PROC", os.cpu_count())))
     futures = []
 
     tg_fn = glob.glob(f"{raw_data_dir}/mfa_outputs/*/*.TextGrid")
     item2tgfn = {os.path.splitext(os.path.basename(v))[0]: v for v in tg_fn}
     for wav_fn in wav_fns:
         item_name = os.path.splitext(os.path.basename(wav_fn))[0].replace("lj_", "")
-        futures.append(p.apply_async(process_item, args=(raw_data_dir, encoder, item2tgfn[item_name], wav_fn)))
+        futures.append(
+            p.apply_async(
+                process_item, args=(raw_data_dir, encoder, item2tgfn[item_name], wav_fn)
+            )
+        )
     p.close()
 
-    builder = IndexedDatasetBuilder(f'{data_dir}/{prefix}')
+    builder = IndexedDatasetBuilder(f"{data_dir}/{prefix}")
     all_keys = []
     lengths = []
     f0s = []
@@ -80,42 +93,64 @@ def process_data(raw_data_dir, encoder, wav_fns, data_dir, prefix):
             continue
         item_name, phone_encoded, mel, mel2ph, spk_id, pitch, f0, dur = res
         txt = fn2txt[item_name]
-        item_name = f'lj_{item_name}'
-        builder.add_item({
-            'item_name': item_name,
-            'txt': txt,
-            'phone': phone_encoded,
-            'mel': mel,
-            'mel2ph': mel2ph,
-            'spk_id': spk_id,
-            'pitch': pitch,
-            'f0': f0,
-        })
+        item_name = f"lj_{item_name}"
+        builder.add_item(
+            {
+                "item_name": item_name,
+                "txt": txt,
+                "phone": phone_encoded,
+                "mel": mel,
+                "mel2ph": mel2ph,
+                "spk_id": spk_id,
+                "pitch": pitch,
+                "f0": f0,
+            }
+        )
         lengths.append(mel.shape[0])
         all_keys.append(item_name)
         f0s.append(f0)
         durs.append(dur)
     p.join()
     builder.finalize()
-    np.save(f'{data_dir}/{prefix}_all_keys.npy', all_keys)
-    np.save(f'{data_dir}/{prefix}_lengths.npy', lengths)
-    np.save(f'{data_dir}/{prefix}_f0s.npy', f0s)
-    np.save(f'{data_dir}/{prefix}_durs.npy', durs)
+    np.save(f"{data_dir}/{prefix}_all_keys.npy", all_keys)
+    np.save(f"{data_dir}/{prefix}_lengths.npy", lengths)
+    np.save(f"{data_dir}/{prefix}_f0s.npy", pad_to_uniform(f0s))
+    np.save(f"{data_dir}/{prefix}_durs.npy", pad_to_uniform(durs))
+
+
+def pad_to_uniform(collection: List[List[Any]]) -> np.ndarray:
+    max_len = max([len(x) for x in collection])
+    array = []
+    for x in collection:
+        if len(x) < max_len:
+            array.append(
+                np.pad(x, (0, max_len - len(x)), "constant", constant_values=0)
+            )
+        else:
+            array.append(x)
+
+    return np.vstack(array)
+
 
 if __name__ == "__main__":
     set_hparams()
-    raw_data_dir = hparams['raw_data_dir']
-    all_wav_fns = sorted(glob.glob(f'{raw_data_dir}/wavs/*.wav'))
+    raw_data_dir = hparams["raw_data_dir"]
+    all_wav_fns = sorted(glob.glob(f"{raw_data_dir}/wavs/*.wav"))
     logging.info("train {}".format(len(all_wav_fns)))
 
-    ph_set = [x.split(' ')[0] for x in open(f'{raw_data_dir}/{hparams["dict_file"]}.txt').readlines()]
+    ph_set = [
+        x.split(" ")[0]
+        for x in open(f'{raw_data_dir}/{hparams["dict_file"]}.txt').readlines()
+    ]
     print(ph_set)
-    os.makedirs(hparams['data_dir'], exist_ok=True)
-    json.dump(ph_set, open(f"{hparams['data_dir']}/phone_set.json", 'w'))
-    encoder = build_phone_encoder(hparams['data_dir'])
+    os.makedirs(hparams["data_dir"], exist_ok=True)
+    json.dump(ph_set, open(f"{hparams['data_dir']}/phone_set.json", "w"))
+    encoder = build_phone_encoder(hparams["data_dir"])
 
     # encoder = build_phone_encoder(raw_data_dir)
-    os.makedirs(hparams['data_dir'], exist_ok=True)
-    process_data(raw_data_dir, encoder, all_wav_fns[:100], hparams['data_dir'], 'valid')
-    process_data(raw_data_dir, encoder, all_wav_fns[100:200], hparams['data_dir'], 'test')
-    process_data(raw_data_dir, encoder, all_wav_fns[200:], hparams['data_dir'], 'train')
+    os.makedirs(hparams["data_dir"], exist_ok=True)
+    process_data(raw_data_dir, encoder, all_wav_fns[:100], hparams["data_dir"], "valid")
+    process_data(
+        raw_data_dir, encoder, all_wav_fns[100:200], hparams["data_dir"], "test"
+    )
+    process_data(raw_data_dir, encoder, all_wav_fns[200:], hparams["data_dir"], "train")
